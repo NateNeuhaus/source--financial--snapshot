@@ -1,0 +1,49 @@
+name: Deploy Live
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Vite site
+        run: npm run build
+
+      - name: Deploy to live repository
+        env:
+          DEPLOY_REPO_LIVE: ${{ secrets.DEPLOY_REPO_LIVE }}
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git clone "https://x-access-token:${DEPLOY_REPO_LIVE}@github.com/NateNeuhaus/website--financial--snapshot.git" deploy
+
+          rm -rf deploy/*
+          rm -rf deploy/.[!.]* deploy/..?* 2>/dev/null || true
+
+          cp -R dist/. deploy/
+
+          cd deploy
+
+          git add -A
+          git commit -m "Deploy Vite site" || echo "No changes to deploy"
+          git push origin main
