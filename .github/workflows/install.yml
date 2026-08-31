@@ -1,4 +1,4 @@
-name: Install src.zip
+name: Install src.zip and Deploy Live
 
 on:
   push:
@@ -11,18 +11,22 @@ permissions:
   contents: write
 
 jobs:
-  install:
+  install-build-deploy:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # -------------------------------------------------------
+      # INSTALL src.zip
+      # -------------------------------------------------------
+
       - name: Save src.zip temporarily
         run: |
           cp src.zip /tmp/src.zip
 
-      - name: Erase repository contents except .github
+      - name: Erase repository except .github
         run: |
           find . -mindepth 1 -maxdepth 1 \
             ! -name '.git' \
@@ -36,8 +40,6 @@ jobs:
 
           ITEM_COUNT=$(find /tmp/extracted -mindepth 1 -maxdepth 1 | wc -l)
 
-          # If ZIP has one top-level folder,
-          # copy that folder's CONTENTS, not the folder itself.
           if [ "$ITEM_COUNT" -eq 1 ]; then
             ONLY_ITEM=$(find /tmp/extracted -mindepth 1 -maxdepth 1)
 
@@ -50,13 +52,33 @@ jobs:
             cp -a /tmp/extracted/. .
           fi
 
-      - name: Clean up zip
+      - name: Remove src.zip
         run: |
           rm -f src.zip
           rm -f /tmp/src.zip
           rm -rf /tmp/extracted
 
-      - name: Commit replacement
+      # -------------------------------------------------------
+      # BUILD
+      # -------------------------------------------------------
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Vite site
+        run: npm run build
+
+      # -------------------------------------------------------
+      # COMMIT NEW SOURCE
+      # -------------------------------------------------------
+
+      - name: Commit source replacement
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -64,9 +86,40 @@ jobs:
           git add -A
 
           if git diff --cached --quiet; then
-            echo "No changes to commit."
-            exit 0
+            echo "No source changes to commit."
+          else
+            git commit -m "Install source from src.zip"
+            git push origin main
           fi
 
-          git commit -m "Replace repository from src.zip"
-          git push
+      # -------------------------------------------------------
+      # DEPLOY DIST
+      # -------------------------------------------------------
+
+      - name: Deploy to live repository
+        env:
+          DEPLOY_REPO_LIVE: ${{ secrets.DEPLOY_REPO_LIVE }}
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git clone \
+            "https://x-access-token:${DEPLOY_REPO_LIVE}@github.com/NateNeuhaus/website--financial--snapshot.git" \
+            /tmp/deploy
+
+          find /tmp/deploy -mindepth 1 -maxdepth 1 \
+            ! -name '.git' \
+            -exec rm -rf {} +
+
+          cp -a dist/. /tmp/deploy/
+
+          cd /tmp/deploy
+
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "No live changes to deploy."
+          else
+            git commit -m "Deploy Vite site"
+            git push origin main
+          fi
