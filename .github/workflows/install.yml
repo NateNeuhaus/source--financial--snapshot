@@ -154,7 +154,7 @@ jobs:
           rm -rf /tmp/deploy
 
           git clone \
-            git@github.com:NateNeuhaus/website--financial--snapshot.git \
+            git@github.com:NateNeuhaus/website--financial-snapshot.git \
             /tmp/deploy
 
           # Delete everything in live repo except its .git folder
