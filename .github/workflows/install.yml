@@ -1,4 +1,4 @@
-name: Install src.zip and Deploy Live
+name: Install Source and Deploy Live
 
 on:
   push:
@@ -15,27 +15,47 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      # ======================================================
+      # CHECKOUT SOURCE REPOSITORY
+      # ======================================================
+
+      - name: Checkout source repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      # -------------------------------------------------------
-      # INSTALL src.zip
-      # -------------------------------------------------------
+      # ======================================================
+      # SAVE UPLOADED ZIP
+      # ======================================================
 
-      - name: Save src.zip temporarily
+      - name: Save src.zip
         run: |
           cp src.zip /tmp/src.zip
 
-      - name: Erase repository except .github
+      # ======================================================
+      # ERASE OLD SOURCE
+      # Preserve:
+      #   .git
+      #   .github
+      # ======================================================
+
+      - name: Erase old source
         run: |
           find . -mindepth 1 -maxdepth 1 \
             ! -name '.git' \
             ! -name '.github' \
             -exec rm -rf {} +
 
+      # ======================================================
+      # EXTRACT NEW SOURCE
+      # If ZIP contains one outer folder, remove that level.
+      # ======================================================
+
       - name: Extract src.zip
         run: |
+          rm -rf /tmp/extracted
           mkdir -p /tmp/extracted
+
           unzip -q /tmp/src.zip -d /tmp/extracted
 
           ITEM_COUNT=$(find /tmp/extracted -mindepth 1 -maxdepth 1 | wc -l)
@@ -44,13 +64,21 @@ jobs:
             ONLY_ITEM=$(find /tmp/extracted -mindepth 1 -maxdepth 1)
 
             if [ -d "$ONLY_ITEM" ]; then
+              echo "Single outer directory detected."
+              echo "Copying its contents into repository root."
+
               cp -a "$ONLY_ITEM"/. .
             else
               cp -a /tmp/extracted/. .
             fi
           else
+            echo "Multiple top-level items detected."
             cp -a /tmp/extracted/. .
           fi
+
+      # ======================================================
+      # CLEAN UP ZIP
+      # ======================================================
 
       - name: Remove src.zip
         run: |
@@ -58,9 +86,9 @@ jobs:
           rm -f /tmp/src.zip
           rm -rf /tmp/extracted
 
-      # -------------------------------------------------------
-      # BUILD
-      # -------------------------------------------------------
+      # ======================================================
+      # NODE / VITE BUILD
+      # ======================================================
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -74,9 +102,9 @@ jobs:
       - name: Build Vite site
         run: npm run build
 
-      # -------------------------------------------------------
-      # COMMIT NEW SOURCE
-      # -------------------------------------------------------
+      # ======================================================
+      # COMMIT CLEAN SOURCE BACK TO SOURCE REPOSITORY
+      # ======================================================
 
       - name: Commit source replacement
         run: |
@@ -92,25 +120,49 @@ jobs:
             git push origin main
           fi
 
-      # -------------------------------------------------------
-      # DEPLOY DIST
-      # -------------------------------------------------------
+      # ======================================================
+      # CONFIGURE SSH FOR LIVE REPOSITORY
+      #
+      # LIVE_DEPLOY_REPO contains the private SSH key.
+      # Matching public key is the read/write SSHACTIONS
+      # deploy key on website--financial--snapshot.
+      # ======================================================
+
+      - name: Configure live deploy SSH key
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.LIVE_DEPLOY_REPO }}
+        run: |
+          mkdir -p ~/.ssh
+
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+
+          chmod 700 ~/.ssh
+          chmod 600 ~/.ssh/id_ed25519
+
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      # ======================================================
+      # DEPLOY DIST TO LIVE REPOSITORY
+      # ======================================================
 
       - name: Deploy to live repository
-        env:
-          DEPLOY_REPO_LIVE: ${{ secrets.DEPLOY_REPO_LIVE }}
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+          rm -rf /tmp/deploy
+
           git clone \
-            "https://x-access-token:${DEPLOY_REPO_LIVE}@github.com/NateNeuhaus/website--financial--snapshot.git" \
+            git@github.com:NateNeuhaus/website--financial--snapshot.git \
             /tmp/deploy
 
+          # Delete everything in live repo except its .git folder
           find /tmp/deploy -mindepth 1 -maxdepth 1 \
             ! -name '.git' \
             -exec rm -rf {} +
 
+          # Copy Vite production build into live repo root
           cp -a dist/. /tmp/deploy/
 
           cd /tmp/deploy
