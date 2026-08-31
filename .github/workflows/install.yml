@@ -1,0 +1,72 @@
+name: Install src.zip
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "src.zip"
+
+permissions:
+  contents: write
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Save src.zip temporarily
+        run: |
+          cp src.zip /tmp/src.zip
+
+      - name: Erase repository contents except .github
+        run: |
+          find . -mindepth 1 -maxdepth 1 \
+            ! -name '.git' \
+            ! -name '.github' \
+            -exec rm -rf {} +
+
+      - name: Extract src.zip
+        run: |
+          mkdir -p /tmp/extracted
+          unzip -q /tmp/src.zip -d /tmp/extracted
+
+          ITEM_COUNT=$(find /tmp/extracted -mindepth 1 -maxdepth 1 | wc -l)
+
+          # If ZIP has one top-level folder,
+          # copy that folder's CONTENTS, not the folder itself.
+          if [ "$ITEM_COUNT" -eq 1 ]; then
+            ONLY_ITEM=$(find /tmp/extracted -mindepth 1 -maxdepth 1)
+
+            if [ -d "$ONLY_ITEM" ]; then
+              cp -a "$ONLY_ITEM"/. .
+            else
+              cp -a /tmp/extracted/. .
+            fi
+          else
+            cp -a /tmp/extracted/. .
+          fi
+
+      - name: Clean up zip
+        run: |
+          rm -f src.zip
+          rm -f /tmp/src.zip
+          rm -rf /tmp/extracted
+
+      - name: Commit replacement
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+
+          git commit -m "Replace repository from src.zip"
+          git push
