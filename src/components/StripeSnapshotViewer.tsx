@@ -1,9 +1,61 @@
-import React, { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import type { DragEvent, ReactNode } from "react";
+
+
+type StripeCustomer = {
+  id: string;
+  name?: string | null;
+  currency?: string | null;
+  delinquent?: boolean;
+  [key: string]: unknown;
+};
+
+type StripePrice = {
+  unit_amount?: number | null;
+  unit_amount_decimal?: string | number | null;
+  currency?: string | null;
+  recurring?: { interval?: string | null; interval_count?: number | null } | null;
+};
+
+type StripeSubscription = {
+  customer?: string | { id?: string } | null;
+  status?: string | null;
+  currency?: string | null;
+  quantity?: number | null;
+  items?: { data?: Array<{ price?: StripePrice | null; quantity?: number | null }> } | null;
+  plan?: { amount?: number | null; currency?: string | null; interval?: string | null; interval_count?: number | null } | null;
+  [key: string]: unknown;
+};
+
+type SnapshotSummary = {
+  customer_count?: number;
+  subscription_count?: number;
+  active_subscription_count?: number;
+  delinquent_customer_count?: number;
+  customers_requiring_attention?: number;
+  [key: string]: unknown;
+};
+
+type StripeSnapshot = {
+  collected_at?: string;
+  summary?: SnapshotSummary;
+  current?: { customers?: StripeCustomer[]; subscriptions?: StripeSubscription[] };
+  [key: string]: unknown;
+};
+
+type CustomerEntry = {
+  customer: StripeCustomer;
+  subscriptions: StripeSubscription[];
+  recurringSubscriptions: StripeSubscription[];
+  primarySubscription: StripeSubscription | null;
+  monthlyAmount: number;
+  currency: string;
+};
 
 export default function StripeSnapshotViewer() {
-  const fileInputRef = useRef(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [snapshot, setSnapshot] = useState(null);
+  const [snapshot, setSnapshot] = useState<StripeSnapshot | null>(null);
   const [fileName, setFileName] = useState("");
   const [error, setError] = useState("");
   const [dragging, setDragging] = useState(false);
@@ -13,16 +65,19 @@ export default function StripeSnapshotViewer() {
      FILE LOADING
   ========================================================= */
 
-  const loadFile = (file) => {
+  const loadFile = (file: File) => {
     if (!file) return;
 
     setError("");
 
     const reader = new FileReader();
 
-    reader.onload = (event) => {
+    reader.onload = () => {
       try {
-        const parsed = JSON.parse(event.target.result);
+        if (typeof reader.result !== "string") {
+          throw new Error("File contents were not text.");
+        }
+        const parsed = JSON.parse(reader.result) as StripeSnapshot;
 
         setSnapshot(parsed);
         setFileName(file.name);
@@ -41,7 +96,7 @@ export default function StripeSnapshotViewer() {
     reader.readAsText(file);
   };
 
-  const handleDrop = (event) => {
+  const handleDrop = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
 
     setDragging(false);
@@ -70,7 +125,7 @@ export default function StripeSnapshotViewer() {
   ========================================================= */
 
   const subscriptionsByCustomer = useMemo(() => {
-    const map = new Map();
+    const map = new Map<string, StripeSubscription[]>();
 
     for (const subscription of subscriptions) {
       const customerId =
@@ -84,7 +139,7 @@ export default function StripeSnapshotViewer() {
         map.set(customerId, []);
       }
 
-      map.get(customerId).push(subscription);
+      map.get(customerId)!.push(subscription);
     }
 
     return map;
@@ -102,7 +157,7 @@ export default function StripeSnapshotViewer() {
       const recurringSubscriptions =
         customerSubscriptions.filter((subscription) =>
           ["active", "trialing", "past_due"].includes(
-            subscription.status
+            subscription.status ?? ""
           )
         );
 
@@ -216,10 +271,12 @@ export default function StripeSnapshotViewer() {
           onDragLeave={(event) => {
             event.preventDefault();
 
+            const relatedTarget = event.relatedTarget;
+
             if (
-              !event.currentTarget.contains(
-                event.relatedTarget
-              )
+              !relatedTarget ||
+              !(relatedTarget instanceof Node) ||
+              !event.currentTarget.contains(relatedTarget)
             ) {
               setDragging(false);
             }
@@ -399,7 +456,7 @@ export default function StripeSnapshotViewer() {
    SUMMARY CARD
 ========================================================= */
 
-function SummaryCard({ label, value }) {
+function SummaryCard({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="summary-card">
       <div className="summary-label">
@@ -417,7 +474,7 @@ function SummaryCard({ label, value }) {
    CUSTOMER ROW
 ========================================================= */
 
-function CustomerRow({ entry }) {
+function CustomerRow({ entry }: { entry: CustomerEntry }) {
   const {
     customer,
     subscriptions,
@@ -506,7 +563,7 @@ function CustomerRow({ entry }) {
    STRIPE CALCULATIONS
 ========================================================= */
 
-function calculateSubscriptionMonthly(subscription) {
+function calculateSubscriptionMonthly(subscription: StripeSubscription): { amount: number; currency: string | null } {
   let total = 0;
   let currency = null;
 
@@ -571,9 +628,9 @@ function calculateSubscriptionMonthly(subscription) {
 }
 
 function monthlyEquivalent(
-  amount,
-  interval,
-  intervalCount = 1
+  amount: number,
+  interval?: string | null,
+  intervalCount: number = 1
 ) {
   intervalCount =
     Number(intervalCount) || 1;
@@ -606,8 +663,8 @@ function monthlyEquivalent(
 }
 
 function formatMoney(
-  cents,
-  currency = "usd"
+  cents: number,
+  currency: string = "usd"
 ) {
   try {
     return new Intl.NumberFormat(
